@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Employee Admin Dashboard</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/styles.css">
+  <script type="module" src="/js/main.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="app-header">
+    <div class="container header-inner">
+      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true" width="28" height="28"><path fill="currentColor" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.3 0-8 1.7-8 5v1h16v-1c0-3.3-4.7-5-8-5Z"/></svg>
+      <h1>Employee Admin Dashboard</h1>
+    </div>
+  </header>
+
+  <main id="main" class="container">
+    <section class="cards" aria-label="Summary">
+      <div class="card"><span class="card-label">Total employees</span><strong id="stat-total">–</strong></div>
+      <div class="card"><span class="card-label">Active</span><strong id="stat-active">–</strong></div>
+      <div class="card"><span class="card-label">On leave</span><strong id="stat-leave">–</strong></div>
+      <div class="card"><span class="card-label">Departments</span><strong id="stat-depts">–</strong></div>
+    </section>
+
+    <section class="toolbar" aria-label="Filters">
+      <label class="field grow">
+        <span class="sr-only">Search employees</span>
+        <input id="search" type="search" placeholder="Search name, email or role" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="sr-only">Department</span>
+        <select id="filter-department"><option value="">All departments</option></select>
+      </label>
+      <label class="field">
+        <span class="sr-only">Status</span>
+        <select id="filter-status"><option value="">All statuses</option></select>
+      </label>
+      <button id="add-btn" class="btn primary" type="button">Add employee</button>
+    </section>
+
+    <div id="state" class="state" role="status" aria-live="polite" hidden></div>
+
+    <div id="table-wrap" class="table-wrap" hidden>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Email</th>
+            <th scope="col">Department</th>
+            <th scope="col">Role</th>
+            <th scope="col">Hired</th>
+            <th scope="col">Status</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <footer class="app-footer">
+    <div class="container">Served by <span id="served-by">–</span></div>
+  </footer>
+
+  <dialog id="form-dialog" aria-labelledby="form-title">
+    <form id="employee-form" method="dialog" novalidate>
+      <h2 id="form-title">Add employee</h2>
+      <p id="form-error" class="form-error" role="alert" hidden></p>
+      <div class="grid">
+        <label>First name
+          <input name="firstName" required maxlength="60" autocomplete="off">
+          <span class="field-error" data-error-for="firstName"></span>
+        </label>
+        <label>Last name
+          <input name="lastName" required maxlength="60" autocomplete="off">
+          <span class="field-error" data-error-for="lastName"></span>
+        </label>
+        <label class="span2">Email
+          <input name="email" type="email" required autocomplete="off">
+          <span class="field-error" data-error-for="email"></span>
+        </label>
+        <label>Department
+          <select name="department" required></select>
+          <span class="field-error" data-error-for="department"></span>
+        </label>
+        <label>Status
+          <select name="status" required></select>
+          <span class="field-error" data-error-for="status"></span>
+        </label>
+        <label>Role
+          <input name="role" required maxlength="80" autocomplete="off">
+          <span class="field-error" data-error-for="role"></span>
+        </label>
+        <label>Hire date
+          <input name="hireDate" type="date" required>
+          <span class="field-error" data-error-for="hireDate"></span>
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="form-cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="form-submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <form method="dialog" id="confirm-form">
+      <h2 id="confirm-title">Delete employee?</h2>
+      <p id="confirm-text"></p>
+      <p id="confirm-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="btn" id="confirm-cancel">Cancel</button>
+        <button type="submit" class="btn danger" id="confirm-ok">Delete</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
