@@ -4,9 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - "app/**"
-      - "Dockerfile"
-      - ".dockerignore"
+      - "backend/**"
+      - "frontend/**"
       - "deploy/**"
       - ".github/workflows/deploy-gce.yml"
   workflow_dispatch:
@@ -24,10 +23,32 @@ env:
   REGION: ${{ vars.GCP_REGION }}
   ZONE: ${{ vars.GCP_ZONE }}
   VM: ${{ vars.GCE_VM_NAME }}
-  IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_AR_REPO }}/profile-app
+  BACKEND_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_AR_REPO }}/employee-backend
+  FRONTEND_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_AR_REPO }}/employee-frontend
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install and test
+        run: npm ci && npm test
+
   build-and-deploy:
+    needs: test
     # On the first merge, Terraform must create the VM before this job runs.
     # Run this workflow manually once, then set AUTO_DEPLOY=true for later pushes.
     if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || vars.AUTO_DEPLOY == 'true')
@@ -54,11 +75,14 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
-      - name: Build and push image
+      - name: Build and push images
         run: |
-          docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" .
-          docker push "${IMAGE}:${GITHUB_SHA}"
-          docker push "${IMAGE}:latest"
+          docker build -t "${BACKEND_IMAGE}:${GITHUB_SHA}" -t "${BACKEND_IMAGE}:latest" ./backend
+          docker build -t "${FRONTEND_IMAGE}:${GITHUB_SHA}" -t "${FRONTEND_IMAGE}:latest" ./frontend
+          docker push "${BACKEND_IMAGE}:${GITHUB_SHA}"
+          docker push "${BACKEND_IMAGE}:latest"
+          docker push "${FRONTEND_IMAGE}:${GITHUB_SHA}"
+          docker push "${FRONTEND_IMAGE}:latest"
 
       # 3) Ship compose + deploy script to the VM over IAP (no public SSH port,
       #    no SSH key stored in GitHub - OS Login issues a short-lived one).
@@ -70,13 +94,13 @@ jobs:
             "$VM:/tmp/profile-app/" "${SSH_FLAGS[@]}"
 
       # 4) On the VM: read the Firestore connection string from instance metadata,
-      #    pull the new image (VM's own SA), docker compose up, check /healthz
-      #    and a real Firestore read (/get-profile).
+      #    pull the new images (VM's own SA), docker compose up, check /healthz
+      #    and a real Firestore ping (/api/health).
       - name: Deploy on the VM
         run: |
           gcloud compute ssh "$VM" --zone "$ZONE" --tunnel-through-iap --quiet \
             --strict-host-key-checking=no \
-            --command "sudo bash /tmp/profile-app/deploy.sh '${IMAGE}:${GITHUB_SHA}'"
+            --command "sudo bash /tmp/profile-app/deploy.sh '${BACKEND_IMAGE}:${GITHUB_SHA}' '${FRONTEND_IMAGE}:${GITHUB_SHA}'"
 
       # 5) Hit the public load balancer, not the VM (which has no external IP).
       - name: Smoke test
@@ -84,9 +108,11 @@ jobs:
           LB_IP_NAME="${VM%-vm}-lb-ip"
           IP="$(gcloud compute addresses describe "$LB_IP_NAME" --global --format='value(address)')"
           curl -fsS --retry 20 --retry-delay 3 --retry-all-errors "http://${IP}/healthz"
-          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors "http://${IP}/get-profile"   # end-to-end: LB -> app -> Firestore
+          curl -fsS --retry 10 --retry-delay 3 --retry-all-errors "http://${IP}/api/health"   # end-to-end: LB -> nginx -> backend -> Firestore
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null "http://${IP}/"   # dashboard page
           {
             echo "### Deployed :rocket:"
-            echo "- Image: \`${IMAGE}:${GITHUB_SHA}\`"
+            echo "- Backend: \`${BACKEND_IMAGE}:${GITHUB_SHA}\`"
+            echo "- Frontend: \`${FRONTEND_IMAGE}:${GITHUB_SHA}\`"
             echo "- URL: http://${IP}"
           } >> "$GITHUB_STEP_SUMMARY"

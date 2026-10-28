@@ -1,14 +1,21 @@
 # Runs on the VM at /opt/profile-app. Values come from /opt/profile-app/.env,
-# which deploy.sh writes on every deploy (image tag + Firestore connection string).
+# which deploy.sh writes on every deploy (image tags + Firestore connection string).
 # The database is Firestore with MongoDB compatibility - nothing stateful runs here.
 name: profile-app
 
 services:
-  my-app:
-    image: ${APP_IMAGE:?APP_IMAGE not set}
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE not set}
     restart: unless-stopped
     ports:
-      - "80:3000"                       # public - the only port open in the firewall
+      - "80:80"                         # public - the only port open in the firewall
+    depends_on:
+      - backend
+
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE not set}
+    restart: unless-stopped
+    # Not published: only the frontend container reaches it, as http://backend:3000.
     environment:
       MONGO_URL: ${MONGO_URL:?MONGO_URL not set}
       MONGO_DB_NAME: user-account
