@@ -1,7 +1,0 @@
-.git
-.github
-deploy
-infra
-**/node_modules
-*.md
-gha-creds-*.json
