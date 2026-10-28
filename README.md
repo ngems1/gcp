@@ -244,4 +244,5 @@ Backend tests (Node 22): `cd backend && npm ci && npm test`.
   `mongosh` using the same connection string from a machine with `roles/datastore.user`.
 - Roll back: re-run an older workflow run, or on the VM set `BACKEND_IMAGE` and `FRONTEND_IMAGE` in `/opt/profile-app/.env` to an older tag and `docker compose up -d`.
 #   g c p  
+ #   g c p  
  
