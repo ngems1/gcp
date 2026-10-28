@@ -1,6 +1,6 @@
 # Copy to terraform.tfvars and fill in.
-project_id  = "static-website-510913"
-github_repo = "oguduf/gcp-cloud-task-manager"
+project_id  = "your-project-id"
+github_repo = "your-github-user/your-repo"
 
 # Optional overrides (defaults shown)
 # region            = "us-east1"
