@@ -1,7 +1,22 @@
-# Profile app on a GCE VM (GitHub Actions + OIDC)
+# Employee Admin Dashboard on a GCE VM (GitHub Actions + OIDC)
 
-Node.js app on a single Compute Engine VM (Docker Compose), with
-**Firestore with MongoDB compatibility** as the database.
+A three-tier app on a single Compute Engine VM (Docker Compose):
+an **nginx frontend** (static dashboard + reverse proxy), a **Node/Express backend API**,
+and **Firestore with MongoDB compatibility** as the database.
+
+> **Security note: the dashboard has no authentication yet.** Anyone who can reach the load
+> balancer IP can read and change employees. Identity-Aware Proxy on the load balancer is a
+> planned follow-up. Do not put real employee data in it until then.
+
+```mermaid
+flowchart LR
+  browser((Browser)) -- "HTTP :80" --> lb[External HTTP load balancer]
+  lb -- ":80" --> fe
+  subgraph VM[Private Compute Engine VM]
+    fe["frontend (nginx)<br/>static dashboard"] -- "/api/* and /healthz<br/>http://backend:3000" --> be["backend (Node/Express)<br/>not published to the host"]
+  end
+  be -- "MONGODB-OIDC, TLS 443" --> fs[(Firestore<br/>employees collection)]
+```
 
 Keyless end to end:
 - GitHub Actions authenticates to Google Cloud with **Workload Identity Federation (OIDC)**.
@@ -23,7 +38,7 @@ flowchart LR
     iap[Identity-Aware Proxy<br/>:22 only]
     fs[(Firestore<br/>MongoDB compat<br/>db: user-account)]
     subgraph VM[Compute Engine VM - SA profile-app-vm]
-      app[my-app :80] -- ID token aud=FIRESTORE --> md[metadata server]
+      app[frontend :80 -> backend :3000] -- ID token aud=FIRESTORE --> md[metadata server]
     end
   end
   users((Users)) -- HTTP :80 --> lb --> VM
@@ -41,14 +56,17 @@ flowchart LR
 
 | Path | What it is |
 |---|---|
-| `.github/workflows/deploy-gce.yml` | App: build → push to Artifact Registry → deploy over IAP SSH → smoke test |
+| `backend/` | Express API (`src/`), tests (`test/`), seed script (`scripts/seed.js`), Dockerfile |
+| `frontend/` | Static dashboard (`public/`, vanilla ES modules, no build step), `nginx.conf`, Dockerfile |
+| `.github/workflows/deploy-gce.yml` | App: test → build two images → push to Artifact Registry → deploy over IAP SSH → smoke test |
+| `.github/workflows/ci.yml` | Backend tests on pull requests (no GCP auth) |
 | `.github/workflows/terraform.yml` | Infra: plan on PRs (posted as a comment) → approve → apply on `main` |
 | `infra/bootstrap/` | Run once by hand: state bucket, GitHub OIDC trust, `tf-plan` / `tf-apply` service accounts |
 | `infra/terraform/` | App infrastructure: private VM/subnet, external HTTP load balancer, Cloud NAT, Firestore, Artifact Registry, IAM |
 | `infra/vm-startup.sh` | VM startup script that installs Docker + compose plugin |
 | `deploy/docker-compose.yml` | What runs on the VM (`/opt/profile-app`) |
-| `deploy/deploy.sh` | Runs on the VM: writes `.env` (image + Firestore URL from instance metadata), pulls, `compose up`, health + DB check |
-| `docker-compose.yaml` | Local development only: a MongoDB container + mongo-express |
+| `deploy/deploy.sh` | Runs on the VM: `deploy.sh <backend-image> <frontend-image>` writes `.env` (images + Firestore URL from instance metadata), pulls, `compose up`, checks `/healthz` and `/api/health` |
+| `docker-compose.yaml` | Local development only: MongoDB + backend + frontend on http://localhost:8080 |
 
 ## CI/CD
 
@@ -56,7 +74,8 @@ flowchart LR
 flowchart LR
   pr[Pull request<br/>infra/terraform/**] --> plan1[terraform plan<br/>tf-plan, read-only] --> comment[Plan posted<br/>as PR comment]
   merge[Merge to main] --> plan2[terraform plan<br/>tf-plan] --> gate{{Approve in<br/>environment 'infra'}} --> apply[terraform apply<br/>saved plan, tf-apply]
-  push[Push to main<br/>app/** or deploy/**] --> deploy[deploy-gce.yml<br/>gh-deployer]
+  prb[Pull request<br/>backend/**] --> ci[ci.yml<br/>backend tests]
+  push[Push to main<br/>backend/** frontend/** deploy/**] --> test[backend tests] --> deploy[deploy-gce.yml<br/>gh-deployer]
 ```
 
 Each job logs in with its own Workload Identity provider and service account:
@@ -162,7 +181,8 @@ flowchart LR
 | Address | `profile-app-lb-ip` | global static external IP on the load balancer; VM internal IP `10.10.0.10`, no external IP |
 | Cloud NAT | `profile-app-nat` | outbound internet access for the private VM, not inbound access |
 
-Docker only publishes host `:80 → my-app:3000`. The database is a managed service reached
+Docker only publishes host `:80 → frontend:80`; the backend (`:3000`) is reachable only
+from the frontend container over the compose network. The database is a managed service reached
 outbound on TLS 443, so it needs no inbound firewall rule. The external IP and
 HTTP URL change when this migration is applied. Since the load balancer has only
 one backend, it returns an error until the app is running and `/healthz` passes.
@@ -172,7 +192,7 @@ cutover window; the old VM address is removed.
 ## Database: Firestore with MongoDB compatibility
 
 - Enterprise-edition Firestore database `user-account` in `us-east1`, created by Terraform (`infra/terraform/firestore.tf`).
-- The app still uses the official `mongodb` Node.js driver (6.x). Only the connection string changed:
+- The backend still uses the official `mongodb` Node.js driver (6.x). Only the connection string changed:
   ```
   mongodb://<uid>.<location>.firestore.goog:443/user-account?loadBalanced=true&tls=true&retryWrites=false
     &authMechanism=MONGODB-OIDC&authMechanismProperties=ENVIRONMENT:gcp,TOKEN_RESOURCE:FIRESTORE
@@ -180,13 +200,46 @@ cutover window; the old VM address is removed.
 - The connection string holds no secret. It is stored as the VM metadata key `mongo-url`, and
   `deploy.sh` copies it into `.env`.
 - The VM service account has `roles/datastore.user`, limited by an IAM condition to this one database.
-- For local development, start Docker Desktop, run `docker compose up -d` from
-  the repository root, then run `npm ci` and `npm start` from `app/` (requires a
-  Node.js installation that includes npm). Open `http://localhost:3000`.
-  Without `MONGO_URL` set, the app falls back to `mongodb://admin:password@localhost:27017`.
+- Employees live in the `employees` collection (string UUID `_id`, only whitelisted fields stored).
+  Queries are exact-match filters only, with sorting done in the backend, to stay within what
+  Firestore's MongoDB compatibility supports.
+- Without `MONGO_URL` set, the backend falls back to `mongodb://admin:password@localhost:27017`.
+
+## API
+
+All routes are served through the frontend's nginx (`/api/*` and `/healthz` are proxied to the backend).
+Every response carries an `X-Served-By` header, and the backend logs one JSON line per request.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/healthz` | Liveness for the load balancer: `200 ok`, no database call |
+| GET | `/api/health` | Pings Firestore: `200 {status, database, instance}`, or `503` if unreachable |
+| GET | `/api/meta` | Departments, statuses, instance name |
+| GET | `/api/employees?department=&status=` | List (exact-match filters, max 1000, sorted by last then first name) |
+| GET | `/api/employees/:id` | One employee, `404` if missing |
+| POST | `/api/employees` | Create (`201`); `400 {error, fields}` on validation errors, `409` on duplicate email |
+| PUT | `/api/employees/:id` | Partial update; same errors as create, plus `404` |
+| DELETE | `/api/employees/:id` | Delete (`204`), `404` if missing |
+
+Employee fields: `firstName`, `lastName` (1–60 chars), `email` (valid, lowercased, unique),
+`department` (Engineering, Sales, Marketing, Finance, HR, Operations, Support), `role` (1–80),
+`hireDate` (`YYYY-MM-DD`), `status` (`active` | `on_leave` | `inactive`, default `active`),
+plus `id`, `createdAt`, `updatedAt` set by the server.
+
+## Local development
+
+Requires Docker Desktop.
+
+```bash
+docker compose up --build
+docker compose exec backend npm run seed     # idempotent: adds ~10 sample employees
+```
+
+Open http://localhost:8080. MongoDB runs locally with `admin` / `password`.
+Backend tests (Node 22): `cd backend && npm ci && npm test`.
 
 ## Operating
 
 - Browse the data in the console under **Firestore → user-account → Firestore Studio**, or with
   `mongosh` using the same connection string from a machine with `roles/datastore.user`.
-- Roll back: re-run an older workflow run, or on the VM set `APP_IMAGE` in `/opt/profile-app/.env` to an older tag and `docker compose up -d`.
+- Roll back: re-run an older workflow run, or on the VM set `BACKEND_IMAGE` and `FRONTEND_IMAGE` in `/opt/profile-app/.env` to an older tag and `docker compose up -d`.
