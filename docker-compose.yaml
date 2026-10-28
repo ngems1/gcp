@@ -1,17 +1,36 @@
+# Local development: the whole three-tier stack.
+#   docker compose up --build
+#   docker compose exec backend npm run seed
+# Then open http://localhost:8080
 services:
-  mongodb:
-    image: mongo
-    ports:
-     - 27017:27017
+  mongo:
+    image: mongo:7
     environment:
-     - MONGO_INITDB_ROOT_USERNAME=admin
-     - MONGO_INITDB_ROOT_PASSWORD=password
-  mongo-express:
-    image: mongo-express
-    ports:
-     - 8081:8081
-    restart: always
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
     environment:
-     - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
-     - ME_CONFIG_MONGODB_ADMINPASSWORD=password
-     - ME_CONFIG_MONGODB_SERVER=mongodb
+      MONGO_URL: mongodb://admin:password@mongo:27017
+      MONGO_DB_NAME: user-account
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo-data:
